@@ -1,0 +1,60 @@
+name: AttackSim Security Scan
+
+on:
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: '0 0 * * *'  # Diário
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Start AttackSim
+        run: |
+          docker-compose -f docker-compose.ci.yml up -d
+          sleep 30
+      
+      - name: Run SQL Injection Scan
+        run: |
+          curl -X POST "http://localhost:8000/api/v1/attacks/test" \
+            -H "Content-Type: application/json" \
+            -d '{"target_url": "'"$TARGET_URL"'", "module_name": "SQL Injection"}' \
+            > sqli-results.json
+      
+      - name: Run XSS Scan
+        run: |
+          curl -X POST "http://localhost:8000/api/v1/attacks/test" \
+            -H "Content-Type: application/json" \
+            -d '{"target_url": "'"$TARGET_URL"'", "module_name": "Cross-Site Scripting (XSS)"}' \
+            > xss-results.json
+      
+      - name: Analyze Results
+        run: |
+          python scripts/analyze_scan.py
+      
+      - name: Upload Scan Results
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-scan-results
+          path: |
+            sqli-results.json
+            xss-results.json
+            scan-report.html
+      
+      - name: Comment PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('scan-summary.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
